@@ -27,27 +27,29 @@ with st.sidebar:
     prod_file = st.file_uploader("Dati Prodotti", type=["xlsx","xls"])
     ref_file  = st.file_uploader("Riferimenti Originali", type=["xlsx","xls"])
     app_file  = st.file_uploader("Applicazioni Macchine", type=["xlsx","xls"])
+
+# Se non ci sono tutti e tre i file, mostro avviso ma non interrompo l'app
 missing = not (prod_file and ref_file and app_file)
 if missing:
-    st.sidebar.warning("📥 Carica tutti e tre i file per procedere.")
-else:
-    # ---- tutto il tuo preprocess + UI qui dentro ----
-    df_prod, df_ref_orig, df_apps, col_map = preprocess()
-
-    # Costanti per filtro SKU
-    skus_list = sorted(df_prod['prod_stripped'].dropna().unique())
-
-    # Tab UI…
-    t1, t2, t3 = st.tabs(["Prodotti","Riferimenti","Applicazioni"])
-    # …ecc. tutto il codice che hai già, ma indentato di un livello
-
+    st.sidebar.warning("Carica tutti e tre i file per procedere.")
 
 # -------------------------------------------
-# Funzioni di caching
+# Funzioni di caching migliorate
 # -------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_df(f):
-    return pd.read_excel(f, dtype=str)
+    # Riportiamo il puntatore all'inizio per evitare ValueError
+    try:
+        f.seek(0)
+    except Exception:
+        pass
+    # Leggiamo il file Excel, catturando eventuali errori
+    try:
+        df = pd.read_excel(f, dtype=str)
+        return df
+    except Exception as e:
+        st.error(f"❌ Errore nella lettura di '{getattr(f, 'name', 'file')}' : {e}")
+        st.stop()
 
 @st.cache_data(show_spinner=False)
 def preprocess():
@@ -74,8 +76,7 @@ def preprocess():
     if 'category_text' in dp_merged.columns:
         for cat in dp_merged['category_text'].dropna().unique():
             sub = dp_merged[dp_merged['category_text']==cat]
-            # colonne con almeno un valore
-            cols = [c for c in sub.columns if sub[c].notna().any() and sub[c].astype(str).str.strip().replace('','Nan').notnull().any()]
+            cols = [c for c in sub.columns if sub[c].notna().any() and sub[c].astype(str).str.strip().replace('', 'Nan').notnull().any()]
             col_map[cat] = cols
 
     # Preparazione applicazioni
@@ -88,68 +89,60 @@ def preprocess():
 
     return dp_merged, dr, da_long, col_map
 
-# Pre-elaborazione dati
-df_prod, df_ref_orig, df_apps, col_map = preprocess()
-
 # -------------------------------------------
-# Costanti per filtro SKU
+# Se tutti i file sono presenti, procedo con preprocess e UI
 # -------------------------------------------
-skus_list = sorted(df_prod['prod_stripped'].dropna().unique())
+if not missing:
+    # Pre-elaborazione dati
+    df_prod, df_ref_orig, df_apps, col_map = preprocess()
 
-# -------------------------------------------
-# UI Tabs
-# -------------------------------------------
-t1, t2, t3 = st.tabs(["Prodotti","Riferimenti","Applicazioni"])
+    # Costanti per filtro SKU
+    skus_list = sorted(df_prod['prod_stripped'].dropna().unique())
 
-# Tab Prodotti
-with t1:
-    st.header("Prodotti")
-    # Filtro SKU fisso
-    sel_sku = st.selectbox("Filtra per SKU", [""] + skus_list)
-    df_view = df_prod[df_prod['prod_stripped']==sel_sku] if sel_sku else df_prod
-    # Filtro Category Text
-    if 'category_text' in df_view.columns:
-        cats = sorted(df_view['category_text'].dropna().unique())
-        sel_cat = st.selectbox("Category Text", [""] + cats)
-        if sel_cat:
-            df_view = df_view[df_view['category_text']==sel_cat]
-    # Filtri dinamici colonne
-    if sel_cat:
-        available_cols = col_map.get(sel_cat, df_view.columns.tolist())
-    else:
-        available_cols = df_view.columns.tolist()
-    sel_cols = st.multiselect("Colonne da mostrare", available_cols, default=available_cols)
-    # Visualizzazione
-    st.dataframe(df_view[sel_cols].reset_index(drop=True), use_container_width=True)
+    # UI Tabs
+    t1, t2, t3 = st.tabs(["Prodotti","Riferimenti","Applicazioni"])
 
-# Tab Riferimenti
-with t2:
-    st.header("Riferimenti Originali")
-    dr = df_ref_orig.copy()
-    # Filtri
-    b_opts = sorted(dr['company_name'].dropna().unique())
-    r_opts = sorted(dr['relation_code'].dropna().unique())
-    sel_br = st.multiselect("Brand", b_opts)
-    if sel_br:
-        dr = dr[dr['company_name'].isin(sel_br)]
-    sel_rr = st.multiselect("Reference", r_opts)
-    if sel_rr:
-        dr = dr[dr['relation_code'].isin(sel_rr)]
-    st.dataframe(dr.reset_index(drop=True), use_container_width=True)
+    # Tab Prodotti
+    with t1:
+        st.header("Prodotti")
+        sel_sku = st.selectbox("Filtra per SKU", [""] + skus_list)
+        df_view = df_prod[df_prod['prod_stripped']==sel_sku] if sel_sku else df_prod
+        if 'category_text' in df_view.columns:
+            cats = sorted(df_view['category_text'].dropna().unique())
+            sel_cat = st.selectbox("Category Text", [""] + cats)
+            if sel_cat:
+                df_view = df_view[df_view['category_text']==sel_cat]
+        available_cols = col_map.get(sel_cat, df_view.columns.tolist()) if 'sel_cat' in locals() else df_view.columns.tolist()
+        sel_cols = st.multiselect("Colonne da mostrare", available_cols, default=available_cols)
+        st.dataframe(df_view[sel_cols].reset_index(drop=True), use_container_width=True)
 
-# Tab Applicazioni
-with t3:
-    st.header("Applicazioni Macchine")
-    da_view = df_apps.copy()
-    ba_opts = sorted(da_view['brand_app'].dropna().unique())
-    ra_opts = sorted(da_view['reference_app'].dropna().unique())
-    sel_ba = st.multiselect("Brand Applicazione", ba_opts)
-    if sel_ba:
-        da_view = da_view[da_view['brand_app'].isin(sel_ba)]
-    sel_ra = st.multiselect("Reference Applicazione", ra_opts)
-    if sel_ra:
-        da_view = da_view[da_view['reference_app'].isin(sel_ra)]
-    st.dataframe(da_view.reset_index(drop=True), use_container_width=True)
+    # Tab Riferimenti
+    with t2:
+        st.header("Riferimenti Originali")
+        dr_view = df_ref_orig.copy()
+        b_opts = sorted(dr_view['company_name'].dropna().unique())
+        r_opts = sorted(dr_view['relation_code'].dropna().unique())
+        sel_br = st.multiselect("Brand", b_opts)
+        if sel_br:
+            dr_view = dr_view[dr_view['company_name'].isin(sel_br)]
+        sel_rr = st.multiselect("Reference", r_opts)
+        if sel_rr:
+            dr_view = dr_view[dr_view['relation_code'].isin(sel_rr)]
+        st.dataframe(dr_view.reset_index(drop=True), use_container_width=True)
+
+    # Tab Applicazioni
+    with t3:
+        st.header("Applicazioni Macchine")
+        da_view = df_apps.copy()
+        ba_opts = sorted(da_view['brand_app'].dropna().unique())
+        ra_opts = sorted(da_view['reference_app'].dropna().unique())
+        sel_ba = st.multiselect("Brand Applicazione", ba_opts)
+        if sel_ba:
+            da_view = da_view[da_view['brand_app'].isin(sel_ba)]
+        sel_ra = st.multiselect("Reference Applicazione", ra_opts)
+        if sel_ra:
+            da_view = da_view[da_view['reference_app'].isin(sel_ra)]
+        st.dataframe(da_view.reset_index(drop=True), use_container_width=True)
 
 # Footer
 st.markdown("---")
