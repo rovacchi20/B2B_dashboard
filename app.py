@@ -27,9 +27,20 @@ with st.sidebar:
     prod_file = st.file_uploader("Dati Prodotti", type=["xlsx","xls"])
     ref_file  = st.file_uploader("Riferimenti Originali", type=["xlsx","xls"])
     app_file  = st.file_uploader("Applicazioni Macchine", type=["xlsx","xls"])
-if not prod_file or not ref_file or not app_file:
-    st.sidebar.warning("Carica tutti e tre i file per procedere.")
-    st.stop()
+missing = not (prod_file and ref_file and app_file)
+if missing:
+    st.sidebar.warning("📥 Carica tutti e tre i file per procedere.")
+else:
+    # ---- tutto il tuo preprocess + UI qui dentro ----
+    df_prod, df_ref_orig, df_apps, col_map = preprocess()
+
+    # Costanti per filtro SKU
+    skus_list = sorted(df_prod['prod_stripped'].dropna().unique())
+
+    # Tab UI…
+    t1, t2, t3 = st.tabs(["Prodotti","Riferimenti","Applicazioni"])
+    # …ecc. tutto il codice che hai già, ma indentato di un livello
+
 
 # -------------------------------------------
 # Funzioni di caching
